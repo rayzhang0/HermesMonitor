@@ -19,6 +19,7 @@
 		0A605C65B7164FD185C0B611 /* HermesMonitorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HermesMonitorApp.swift; sourceTree = "<group>"; };
 		24B2E5AAD135482CAB5AD8FA /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		44A46BD8CCCA4AD9BFA73C17 /* HermesMonitor.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = HermesMonitor.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		701F12442FB8E14F0003B5C0 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		81843E8DA08C462988DA3F79 /* sample_inventory.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = sample_inventory.json; sourceTree = "<group>"; };
 		B540A5F0791F42F0BAA319CF /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		E08954BF625E40AB8ECC48A3 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -45,6 +46,7 @@
 		F63EE3D1CCCA40C0A1C1CC00 /* HermesMonitor */ = {
 			isa = PBXGroup;
 			children = (
+				701F12442FB8E14F0003B5C0 /* Info.plist */,
 				0A605C65B7164FD185C0B611 /* HermesMonitorApp.swift */,
 				24B2E5AAD135482CAB5AD8FA /* Models.swift */,
 				F4606F8A2A5041A883915923 /* Stores.swift */,
@@ -160,6 +162,7 @@
 				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = 4269LBS7PM;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HermesMonitor/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Monitor";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -183,6 +186,7 @@
 				DEVELOPMENT_TEAM = 4269LBS7PM;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = HermesMonitor/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Hermes Monitor";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.lifestyle";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
