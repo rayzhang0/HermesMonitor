@@ -1,0 +1,17 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local secrets and runtime state
+**/.env
+hermes-monitor/state/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+**/Private*.xcconfig
+**/Secrets*.xcconfig

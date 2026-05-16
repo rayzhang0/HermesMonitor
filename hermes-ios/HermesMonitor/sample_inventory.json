@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-01-01T12:00:00+00:00",
+  "last_checked_at": "2026-01-01T12:00:00+00:00",
+  "available": [
+    {
+      "product_key": "example-product-1",
+      "name": "Example Bag",
+      "url": "https://example.com/product/example-bag",
+      "price": "$1,000",
+      "image_url": null,
+      "first_seen_at": "2026-01-01T10:00:00+00:00",
+      "last_seen_at": "2026-01-01T12:00:00+00:00",
+      "purchasable_status": "purchasable",
+      "purchasable_checked_at": "2026-01-01T11:45:00+00:00"
+    }
+  ],
+  "history": [
+    {
+      "product_key": "example-product-2",
+      "name": "Archived Example Bag",
+      "url": "https://example.com/product/archived-example-bag",
+      "price": "$900",
+      "image_url": null,
+      "purchasable_status": "unknown",
+      "purchasable_checked_at": null,
+      "available_from": "2025-12-31T18:00:00+00:00",
+      "available_until": "2026-01-01T08:00:00+00:00"
+    }
+  ]
+}
