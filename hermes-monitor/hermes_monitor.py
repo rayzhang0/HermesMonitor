@@ -72,6 +72,10 @@ class InventoryChanges:
     def has_changes(self) -> bool:
         return bool(self.added or self.removed or self.price_changed or self.detail_changed)
 
+    @property
+    def has_alert_changes(self) -> bool:
+        return bool(self.added or self.removed)
+
 
 class TextLinksImagesParser(HTMLParser):
     def __init__(self) -> None:
@@ -193,7 +197,7 @@ def check_once(url: str, state_path: Path, db_path: Path, export_path: Path, *, 
     export_public_inventory(db_path, export_path)
     notify_access_recovered(db_path, snapshot)
 
-    if changes.has_changes:
+    if changes.has_alert_changes:
         send_email(render_change_subject(changes), render_change_email_body(changes, snapshot))
         print(f"[{now_local()}] changes added={len(changes.added)} removed={len(changes.removed)} price={len(changes.price_changed)} detail={len(changes.detail_changed)}; email sent", flush=True)
         return True, len(snapshot.products)
@@ -351,7 +355,31 @@ def init_database(path: Path) -> None:
         for column, column_type in [("purchasable_status", "TEXT NOT NULL DEFAULT 'unknown'"), ("purchasable_checked_at", "TEXT")]:
             ensure_column(conn, "availability_history", column, column_type)
         normalize_legacy_purchasable_statuses(conn)
+        repair_active_first_seen_from_open_history(conn)
         conn.commit()
+
+
+def repair_active_first_seen_from_open_history(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        UPDATE products
+        SET first_seen_at = (
+            SELECT h.available_from
+            FROM availability_history h
+            WHERE h.product_key = products.product_key AND h.available_until IS NULL
+            ORDER BY h.id DESC
+            LIMIT 1
+        )
+        WHERE active = 1
+          AND EXISTS (
+              SELECT 1
+              FROM availability_history h
+              WHERE h.product_key = products.product_key
+                AND h.available_until IS NULL
+                AND h.available_from != products.first_seen_at
+          )
+        """
+    )
 
 
 def normalize_legacy_purchasable_statuses(conn: sqlite3.Connection) -> None:
@@ -455,6 +483,13 @@ def upsert_product(conn: sqlite3.Connection, product: Product, checked_at: str, 
             price = excluded.price,
             image_url = COALESCE(excluded.image_url, products.image_url),
             baseline_excluded = excluded.baseline_excluded,
+            detail_checked_at = CASE WHEN products.active = 0 THEN NULL ELSE products.detail_checked_at END,
+            detail_failed_at = CASE WHEN products.active = 0 THEN NULL ELSE products.detail_failed_at END,
+            detail_retry_after = CASE WHEN products.active = 0 THEN NULL ELSE products.detail_retry_after END,
+            detail_failure_count = CASE WHEN products.active = 0 THEN 0 ELSE products.detail_failure_count END,
+            purchasable_status = CASE WHEN products.active = 0 THEN 'unknown' ELSE products.purchasable_status END,
+            purchasable_checked_at = CASE WHEN products.active = 0 THEN NULL ELSE products.purchasable_checked_at END,
+            first_seen_at = CASE WHEN products.active = 0 THEN excluded.first_seen_at ELSE products.first_seen_at END,
             last_seen_at = excluded.last_seen_at,
             active = excluded.active
         """,

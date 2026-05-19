@@ -83,7 +83,7 @@ def sweep_once(db_path: Path, export_path: Path, *, max_per_run: int) -> tuple[i
             print(f"[{now_local()}] detail sweeper failed {product.name}: {error}", flush=True)
             continue
         update_purchasable_status(db_path, product, new_status)
-        if old_status != new_status:
+        if old_status != new_status and is_notifiable_status_transition(old_status, new_status):
             changed.append((product, old_status, new_status))
     if checked:
         export_public_inventory(db_path, export_path)
@@ -160,6 +160,11 @@ def update_purchasable_status(db_path: Path, product: Product, status: str) -> N
         )
         insert_event(conn, "purchasable_status", key, product.purchasable_status or "unknown", status, checked_at)
         conn.commit()
+
+
+def is_notifiable_status_transition(old: str, new: str) -> bool:
+    notifiable = {"purchasable", "not_purchasable"}
+    return old in notifiable and new in notifiable and old != new
 
 
 def render_status_email(changes: list[tuple[Product, str, str]]) -> str:
