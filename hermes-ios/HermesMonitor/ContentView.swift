@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @EnvironmentObject private var inventory: InventoryStore
@@ -167,23 +168,154 @@ struct AccountView: View {
 }
 
 
+@MainActor
+final class ProductImageCache {
+    static let shared = ProductImageCache()
+
+    private let cache = NSCache<NSURL, UIImage>()
+    private var loading = Set<URL>()
+
+    private init() {
+        cache.countLimit = 120
+    }
+
+    func image(for url: URL) -> UIImage? {
+        cache.object(forKey: url as NSURL)
+    }
+
+    func preload(_ urlStrings: [String]) {
+        for urlString in urlStrings.prefix(60) {
+            guard let url = URL(string: urlString), image(for: url) == nil, !loading.contains(url) else { continue }
+            Task { _ = await load(url) }
+        }
+    }
+
+    func load(_ url: URL) async -> UIImage? {
+        if let cached = image(for: url) { return cached }
+        if loading.contains(url) { return nil }
+        loading.insert(url)
+        defer { loading.remove(url) }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(from: url)
+            guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode), let image = UIImage(data: data) else {
+                return nil
+            }
+            cache.setObject(image, forKey: url as NSURL)
+            return image
+        } catch {
+            return nil
+        }
+    }
+}
+
+@MainActor
+final class ProductImageLoader: ObservableObject {
+    @Published private(set) var image: UIImage?
+    @Published private(set) var isLoading = false
+
+    func load(_ imageURL: String?) async {
+        guard let imageURL, let url = URL(string: imageURL) else {
+            image = nil
+            return
+        }
+        if let cached = ProductImageCache.shared.image(for: url) {
+            image = cached
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        image = await ProductImageCache.shared.load(url)
+    }
+}
+
+struct ImageSheetItem: Identifiable {
+    let urlString: String
+    var id: String { urlString }
+}
+
+struct ProductImageButton: View {
+    let imageURL: String?
+    let contentMode: ContentMode
+    let height: CGFloat
+    let placeholderSize: CGFloat
+    var maxImageWidth: CGFloat? = nil
+
+    @State private var selectedImage: ImageSheetItem?
+
+    var body: some View {
+        Button {
+            guard let imageURL else { return }
+            selectedImage = ImageSheetItem(urlString: imageURL)
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8).fill(Theme.imageSurface)
+                CachedProductImage(imageURL: imageURL, contentMode: contentMode, placeholderSize: placeholderSize, maxImageWidth: maxImageWidth)
+            }
+            .frame(height: height)
+            .frame(maxWidth: .infinity)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(imageURL == nil)
+        .sheet(item: $selectedImage) { item in
+            ProductImageViewer(imageURL: item.urlString)
+        }
+    }
+}
+
+struct CachedProductImage: View {
+    let imageURL: String?
+    let contentMode: ContentMode
+    let placeholderSize: CGFloat
+    var maxImageWidth: CGFloat? = nil
+
+    @StateObject private var loader = ProductImageLoader()
+
+    var body: some View {
+        Group {
+            if let image = loader.image {
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+                    .frame(maxWidth: maxImageWidth ?? .infinity)
+            } else {
+                LogoMark().frame(width: placeholderSize, height: placeholderSize)
+                    .opacity(loader.isLoading ? 0.55 : 1)
+            }
+        }
+        .task(id: imageURL) {
+            await loader.load(imageURL)
+        }
+    }
+}
+
+struct ProductImageViewer: View {
+    @Environment(\.dismiss) private var dismiss
+    let imageURL: String
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Theme.background.ignoresSafeArea()
+                CachedProductImage(imageURL: imageURL, contentMode: .fit, placeholderSize: 96)
+                    .padding(18)
+            }
+            .navigationTitle("Product image")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                Button("Done") { dismiss() }
+            }
+        }
+    }
+}
+
 struct ProductThumbnail: View {
     let imageURL: String?
 
     var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 8).fill(Theme.imageSurface)
-            if let imageURL, let url = URL(string: imageURL) {
-                AsyncImage(url: url) { image in
-                    image.resizable().scaledToFill()
-                } placeholder: {
-                    LogoMark().padding(18)
-                }
-            } else {
-                LogoMark().padding(18)
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        ProductImageButton(imageURL: imageURL, contentMode: .fill, height: 76, placeholderSize: 32)
     }
 }
 
@@ -195,23 +327,13 @@ struct ProductCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(Theme.imageSurface)
-                if let imageURL = product.imageURL, let url = URL(string: imageURL) {
-                    AsyncImage(url: url) { image in
-                        image.resizable()
-                            .aspectRatio(contentMode: usesPadLayout ? .fit : .fill)
-                            .frame(maxWidth: usesPadLayout ? 460 : .infinity)
-                    } placeholder: {
-                        LogoMark().frame(width: 72, height: 72)
-                    }
-                } else {
-                    LogoMark().frame(width: 92, height: 92)
-                }
-            }
-            .frame(height: usesPadLayout ? 260 : 210)
-            .frame(maxWidth: .infinity)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            ProductImageButton(
+                imageURL: product.imageURL,
+                contentMode: usesPadLayout ? .fit : .fill,
+                height: usesPadLayout ? 260 : 210,
+                placeholderSize: 92,
+                maxImageWidth: usesPadLayout ? 460 : nil
+            )
 
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {

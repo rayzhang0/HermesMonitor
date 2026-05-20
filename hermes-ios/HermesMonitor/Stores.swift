@@ -15,6 +15,10 @@ final class InventoryStore: ObservableObject {
             let rightVisibleSince = right.firstSeenAt ?? ""
             if leftVisibleSince != rightVisibleSince { return leftVisibleSince > rightVisibleSince }
 
+            let leftRank = purchasableRank(left.purchasableStatus)
+            let rightRank = purchasableRank(right.purchasableStatus)
+            if leftRank != rightRank { return leftRank < rightRank }
+
             let leftPrice = priceNumber(left.price)
             let rightPrice = priceNumber(right.price)
             if leftPrice != rightPrice { return leftPrice < rightPrice }
@@ -75,7 +79,9 @@ final class InventoryStore: ObservableObject {
         errorMessage = nil
         defer { isLoading = false }
         do {
-            payload = try await loadRemoteOrSample()
+            let loadedPayload = try await loadRemoteOrSample()
+            payload = loadedPayload
+            ProductImageCache.shared.preload(imageURLs(from: loadedPayload))
         } catch is CancellationError {
             return
         } catch let urlError as URLError where urlError.code == .cancelled {
@@ -108,6 +114,12 @@ final class InventoryStore: ObservableObject {
         guard let url = Bundle.main.url(forResource: "sample_inventory", withExtension: "json") else { return nil }
         let data = try Data(contentsOf: url)
         return try JSONDecoder().decode(InventoryPayload.self, from: data)
+    }
+
+    private func imageURLs(from payload: InventoryPayload) -> [String] {
+        var seen = Set<String>()
+        let urls = payload.available.compactMap(\.imageURL) + payload.history.compactMap(\.imageURL)
+        return urls.filter { seen.insert($0).inserted }
     }
 }
 
