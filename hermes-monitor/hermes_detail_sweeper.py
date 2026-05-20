@@ -50,10 +50,10 @@ def main() -> None:
     args = parser.parse_args()
 
     init_database(args.db)
+    delay = random.randint(args.initial_delay_min, max(args.initial_delay_min, args.initial_delay_max))
+    print(f"[{now_local()}] detail sweeper waiting {delay}s before detail checks", flush=True)
+    time.sleep(delay)
     while True:
-        delay = random.randint(args.initial_delay_min, max(args.initial_delay_min, args.initial_delay_max))
-        print(f"[{now_local()}] detail sweeper waiting {delay}s before detail checks", flush=True)
-        time.sleep(delay)
         checked, changed = sweep_once(args.db, args.export, max_per_run=args.max_per_run)
         print(f"[{now_local()}] detail sweeper checked={checked} status_changed={changed}", flush=True)
         if not args.loop:
@@ -101,9 +101,12 @@ def load_candidates(db_path: Path, *, max_per_run: int) -> list[Product]:
             FROM products p
             JOIN availability_history h ON h.product_key = p.product_key AND h.available_until IS NULL
             WHERE p.active = 1
-              AND (p.purchasable_checked_at IS NULL OR p.purchasable_checked_at <= ?)
+              AND (p.purchasable_status = 'unknown' OR p.purchasable_checked_at IS NULL OR p.purchasable_checked_at <= ?)
               AND (p.detail_retry_after IS NULL OR p.detail_retry_after <= ?)
             ORDER BY
+                CASE WHEN p.purchasable_status = 'unknown' THEN 0 ELSE 1 END ASC,
+                CASE WHEN p.purchasable_status = 'unknown' AND p.purchasable_checked_at IS NULL THEN 0 ELSE 1 END ASC,
+                CASE WHEN p.purchasable_status = 'unknown' THEN h.available_from ELSE NULL END DESC,
                 CASE WHEN p.purchasable_checked_at IS NULL THEN 0 ELSE 1 END ASC,
                 p.purchasable_checked_at ASC,
                 h.available_from ASC

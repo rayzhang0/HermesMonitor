@@ -11,13 +11,15 @@ final class InventoryStore: ObservableObject {
 
     var available: [TrackedProduct] {
         (payload?.available ?? []).sorted { left, right in
-            let leftRank = purchasableRank(left.purchasableStatus)
-            let rightRank = purchasableRank(right.purchasableStatus)
-            if leftRank != rightRank { return leftRank < rightRank }
+            let leftVisibleSince = left.firstSeenAt ?? ""
+            let rightVisibleSince = right.firstSeenAt ?? ""
+            if leftVisibleSince != rightVisibleSince { return leftVisibleSince > rightVisibleSince }
+
             let leftPrice = priceNumber(left.price)
             let rightPrice = priceNumber(right.price)
-            if leftPrice == rightPrice { return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending }
-            return leftPrice < rightPrice
+            if leftPrice != rightPrice { return leftPrice < rightPrice }
+
+            return left.name.localizedCaseInsensitiveCompare(right.name) == .orderedAscending
         }
     }
     var purchasableCount: Int {
