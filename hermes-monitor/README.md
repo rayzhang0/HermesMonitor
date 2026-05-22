@@ -42,10 +42,10 @@ Run once:
 python3 hermes_monitor.py --once
 ```
 
-Run continuously every 30 minutes plus jitter:
+Run continuously every 15 minutes plus jitter:
 
 ```bash
-python3 hermes_monitor.py --interval 1800 --jitter 300
+python3 hermes_monitor.py --interval 900 --jitter 300
 ```
 
 Export app-readable JSON:

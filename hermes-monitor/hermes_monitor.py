@@ -23,8 +23,8 @@ DEFAULT_URL = "https://www.hermes.com/us/en/category/leather-goods/bags-and-clut
 DEFAULT_STATE_PATH = Path("state/hermes_womens_bags.json")
 DEFAULT_DB_PATH = Path("state/hermes_monitor.sqlite3")
 DEFAULT_EXPORT_PATH = Path("state/public_inventory.json")
-DEFAULT_INTERVAL_SECONDS = 1800
-MIN_INTERVAL_SECONDS = 1800
+DEFAULT_INTERVAL_SECONDS = 900
+MIN_INTERVAL_SECONDS = 900
 DEFAULT_JITTER_SECONDS = 300
 MIN_REQUEST_GAP_SECONDS = 300
 BACKOFF_BASE_SECONDS = 21600
@@ -126,7 +126,7 @@ def main() -> None:
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE_PATH)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--export", type=Path, default=DEFAULT_EXPORT_PATH)
-    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS, help="Seconds between checks in continuous mode. Minimum 1800 seconds unless --allow-fast-checks is used.")
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS, help="Seconds between checks in continuous mode. Minimum 900 seconds unless --allow-fast-checks is used.")
     parser.add_argument("--jitter", type=int, default=DEFAULT_JITTER_SECONDS)
     parser.add_argument("--allow-fast-checks", action="store_true")
     parser.add_argument("--once", action="store_true")
