@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import random
@@ -23,9 +24,9 @@ DEFAULT_URL = "https://www.hermes.com/us/en/category/leather-goods/bags-and-clut
 DEFAULT_STATE_PATH = Path("state/hermes_womens_bags.json")
 DEFAULT_DB_PATH = Path("state/hermes_monitor.sqlite3")
 DEFAULT_EXPORT_PATH = Path("state/public_inventory.json")
-DEFAULT_INTERVAL_SECONDS = 900
-MIN_INTERVAL_SECONDS = 900
-DEFAULT_JITTER_SECONDS = 300
+DEFAULT_INTERVAL_SECONDS = 300
+MIN_INTERVAL_SECONDS = 300
+DEFAULT_JITTER_SECONDS = 120
 MIN_REQUEST_GAP_SECONDS = 300
 BACKOFF_BASE_SECONDS = 21600
 BACKOFF_CAP_SECONDS = 86400
@@ -126,7 +127,7 @@ def main() -> None:
     parser.add_argument("--state", type=Path, default=DEFAULT_STATE_PATH)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH)
     parser.add_argument("--export", type=Path, default=DEFAULT_EXPORT_PATH)
-    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS, help="Seconds between checks in continuous mode. Minimum 900 seconds unless --allow-fast-checks is used.")
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS, help="Seconds between checks in continuous mode. Minimum 300 seconds unless --allow-fast-checks is used.")
     parser.add_argument("--jitter", type=int, default=DEFAULT_JITTER_SECONDS)
     parser.add_argument("--allow-fast-checks", action="store_true")
     parser.add_argument("--once", action="store_true")
@@ -214,11 +215,12 @@ def fetch_snapshot(url: str) -> Snapshot:
 
 
 def fetch_html(url: str, *, stage: str) -> tuple[str, str | None, str | None]:
-    request = Request(url, headers=build_request_headers())
+    request = Request(url, headers=build_request_headers(stage=stage))
     try:
-        with urlopen(request, timeout=30) as response:
-            charset = response.headers.get_content_charset() or "utf-8"
-            return response.read().decode(charset, errors="replace"), response.headers.get("ETag"), response.headers.get("Last-Modified")
+        with force_address_family(address_family_for_stage(stage)):
+            with urlopen(request, timeout=30) as response:
+                charset = response.headers.get_content_charset() or "utf-8"
+                return response.read().decode(charset, errors="replace"), response.headers.get("ETag"), response.headers.get("Last-Modified")
     except HTTPError as error:
         if error.code in {403, 429, 500, 502, 503, 504}:
             raise RateLimitedError(f"HTTP {error.code}", stage=stage, status_code=error.code, url=url) from error
@@ -646,26 +648,36 @@ def set_state(conn: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def notify_access_issue(db_path: Path, error: Exception) -> None:
+    issue_scope = access_issue_scope(error)
     today = datetime.now(timezone.utc).date().isoformat()
     with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT value FROM monitor_state WHERE key = 'last_access_alert_date'").fetchone()
+        row = conn.execute("SELECT value FROM monitor_state WHERE key = ?", (f"last_access_alert_date_{issue_scope}",)).fetchone()
         if row and row[0] == today:
             return
         send_email("Hermes Monitor access issue", render_access_issue_body(error), recipients=get_failure_recipients())
-        set_state(conn, "last_access_alert_date", today)
-        set_state(conn, "active_access_issue_at", datetime.now(timezone.utc).isoformat())
-        set_state(conn, "active_access_issue", summarize_access_issue(error))
+        set_state(conn, f"last_access_alert_date_{issue_scope}", today)
+        set_state(conn, f"active_access_issue_at_{issue_scope}", datetime.now(timezone.utc).isoformat())
+        set_state(conn, f"active_access_issue_{issue_scope}", summarize_access_issue(error))
         conn.commit()
 
 
 def notify_access_recovered(db_path: Path, snapshot: Snapshot) -> None:
+    notify_stage_access_recovered(db_path, stage="category", url=snapshot.url, successful_count=len(snapshot.products))
+
+
+def notify_stage_access_recovered(db_path: Path, *, stage: str, url: str | None = None, successful_count: int | None = None) -> None:
+    issue_scope = normalize_stage_key(stage)
     with sqlite3.connect(db_path) as conn:
-        issue_row = conn.execute("SELECT value FROM monitor_state WHERE key = 'active_access_issue'").fetchone()
+        issue_row = conn.execute("SELECT value FROM monitor_state WHERE key = ?", (f"active_access_issue_{issue_scope}",)).fetchone()
         if not issue_row:
             return
-        started_row = conn.execute("SELECT value FROM monitor_state WHERE key = 'active_access_issue_at'").fetchone()
-        send_email("Hermes Monitor access recovered", render_access_recovered_body(snapshot, issue_row[0], started_row[0] if started_row else None), recipients=get_failure_recipients())
-        conn.execute("DELETE FROM monitor_state WHERE key IN ('last_access_alert_date', 'active_access_issue', 'active_access_issue_at')")
+        started_row = conn.execute("SELECT value FROM monitor_state WHERE key = ?", (f"active_access_issue_at_{issue_scope}",)).fetchone()
+        send_email(
+            "Hermes Monitor access recovered",
+            render_access_recovered_body(stage=stage, issue_summary=issue_row[0], issue_started_at=started_row[0] if started_row else None, url=url, successful_count=successful_count),
+            recipients=get_failure_recipients(),
+        )
+        conn.execute("DELETE FROM monitor_state WHERE key IN (?, ?, ?)", (f"last_access_alert_date_{issue_scope}", f"active_access_issue_{issue_scope}", f"active_access_issue_at_{issue_scope}"))
         conn.commit()
 
 
@@ -720,8 +732,12 @@ def summarize_access_issue(error: Exception) -> str:
     return str(error)
 
 
-def render_access_recovered_body(snapshot: Snapshot, issue_summary: str, issue_started_at: str | None) -> str:
-    lines = ["Hermes Monitor access has recovered.", "", f"Recovered at: {datetime.now(timezone.utc).isoformat()}", f"Successful product-link count: {len(snapshot.products)}", f"URL: {snapshot.url}"]
+def render_access_recovered_body(*, stage: str, issue_summary: str, issue_started_at: str | None, url: str | None = None, successful_count: int | None = None) -> str:
+    lines = ["Hermes Monitor access has recovered.", "", f"Recovered at: {datetime.now(timezone.utc).isoformat()}", f"Recovered stage: {stage}"]
+    if successful_count is not None:
+        lines.append(f"Successful product-link count: {successful_count}")
+    if url:
+        lines.append(f"URL: {url}")
     if issue_started_at:
         lines.append(f"Previous issue first recorded at: {issue_started_at}")
     lines.extend(["", "Previous issue:", issue_summary, "", "Change alerts still go to the normal monitor recipient list."])
@@ -780,9 +796,14 @@ class RateLimitedError(RuntimeError):
         self.url = url
 
 
-def build_request_headers() -> dict[str, str]:
+def build_request_headers(*, stage: str) -> dict[str, str]:
+    user_agents = USER_AGENTS
+    if request_queue_for_stage(stage) == "ipv4":
+        user_agents = USER_AGENTS[:2]
+    elif request_queue_for_stage(stage) == "ipv6":
+        user_agents = USER_AGENTS[1:]
     return {
-        "User-Agent": random.choice(USER_AGENTS),
+        "User-Agent": random.choice(user_agents),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": random.choice(ACCEPT_LANGUAGES),
         "Cache-Control": "no-cache",
@@ -794,23 +815,71 @@ def build_request_headers() -> dict[str, str]:
 
 
 def wait_for_request_slot(db_path: Path, *, stage: str, min_gap_seconds: int = MIN_REQUEST_GAP_SECONDS) -> None:
+    queue = request_queue_for_stage(stage)
+    request_at_key = f"last_http_request_at_{queue}"
+    request_stage_key = f"last_http_request_stage_{queue}"
     while True:
         now = datetime.now(timezone.utc)
         with sqlite3.connect(db_path) as conn:
-            row = conn.execute("SELECT value FROM monitor_state WHERE key = 'last_http_request_at'").fetchone()
+            row = conn.execute("SELECT value FROM monitor_state WHERE key = ?", (request_at_key,)).fetchone()
             if row:
                 last = parse_datetime(row[0])
                 if last is not None:
                     elapsed = (now - last).total_seconds()
                     if elapsed < min_gap_seconds:
                         wait_seconds = int(min_gap_seconds - elapsed) + random.randint(0, 30)
-                        print(f"[{now_local()}] waiting {wait_seconds}s before {stage} request to keep requests at least {min_gap_seconds}s apart", flush=True)
+                        print(f"[{now_local()}] waiting {wait_seconds}s before {stage} request on {queue} queue to keep requests at least {min_gap_seconds}s apart", flush=True)
                         time.sleep(wait_seconds)
                         continue
-            set_state(conn, "last_http_request_at", now.isoformat())
-            set_state(conn, "last_http_request_stage", stage)
+            set_state(conn, request_at_key, now.isoformat())
+            set_state(conn, request_stage_key, stage)
             conn.commit()
             return
+
+
+def request_queue_for_stage(stage: str) -> str:
+    normalized = normalize_stage_key(stage)
+    if normalized == "category":
+        return "ipv4"
+    if normalized == "product_detail":
+        return "ipv6"
+    return "default"
+
+
+def address_family_for_stage(stage: str) -> socket.AddressFamily | None:
+    queue = request_queue_for_stage(stage)
+    if queue == "ipv4":
+        return socket.AF_INET
+    if queue == "ipv6":
+        return socket.AF_INET6
+    return None
+
+
+@contextlib.contextmanager
+def force_address_family(family: socket.AddressFamily | None):
+    if family is None:
+        yield
+        return
+    original_getaddrinfo = socket.getaddrinfo
+
+    def family_getaddrinfo(host, port, family_arg=0, type=0, proto=0, flags=0):
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = family_getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+
+def access_issue_scope(error: Exception) -> str:
+    if isinstance(error, RateLimitedError):
+        return normalize_stage_key(error.stage)
+    return "general"
+
+
+def normalize_stage_key(stage: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", stage.lower()).strip("_") or "general"
 
 
 def parse_datetime(value: str | None) -> datetime | None:

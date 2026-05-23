@@ -23,6 +23,8 @@ from hermes_monitor import (
     product_to_json,
     send_email,
     RateLimitedError,
+    notify_access_issue,
+    notify_stage_access_recovered,
 )
 
 RECHECK_AFTER_SECONDS = 3 * 60 * 60
@@ -79,10 +81,13 @@ def sweep_once(db_path: Path, export_path: Path, *, max_per_run: int) -> tuple[i
         try:
             new_status = product_detail_status(product.url)
         except Exception as error:
+            if isinstance(error, RateLimitedError):
+                notify_access_issue(db_path, error)
             mark_detail_failure(db_path, product, error)
             print(f"[{now_local()}] detail sweeper failed {product.name}: {error}", flush=True)
             continue
         update_purchasable_status(db_path, product, new_status)
+        notify_stage_access_recovered(db_path, stage="product detail", url=product.url, successful_count=1)
         if old_status != new_status and is_notifiable_status_transition(old_status, new_status):
             changed.append((product, old_status, new_status))
     if checked:

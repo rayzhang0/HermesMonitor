@@ -7,7 +7,9 @@ https://www.hermes.com/us/en/category/leather-goods/bags-and-clutches/womens-bag
 
 ## Current Logic
 
-The monitor only reads the main category page. It does not open second-layer product detail pages. A product link appearing on the main page is treated as available; when that link disappears, the open availability session is closed.
+The main monitor reads the category page and treats a product link appearing there as visible. When that link disappears, the open availability session is closed. A separate detail sweeper checks visible product pages to classify purchasable status.
+
+The category checker uses its own IPv4 request queue. The detail sweeper uses its own IPv6 request queue. Each queue keeps a separate minimum request gap and separate rate-limit/recovery alert state so detail-page checks do not delay the main category check.
 
 Because the current page contains stale product links, the first successful run after this version seeds the current active links as a one-time excluded baseline. Those baseline products do not appear as available in the app and do not create false alert emails. If a baseline product disappears and later reappears, that later appearance is tracked as a real availability session.
 
@@ -42,10 +44,10 @@ Run once:
 python3 hermes_monitor.py --once
 ```
 
-Run continuously every 15 minutes plus jitter:
+Run continuously every 5 minutes plus jitter:
 
 ```bash
-python3 hermes_monitor.py --interval 900 --jitter 300
+python3 hermes_monitor.py --interval 300 --jitter 120
 ```
 
 Export app-readable JSON:
