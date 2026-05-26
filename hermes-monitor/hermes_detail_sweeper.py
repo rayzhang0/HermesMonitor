@@ -22,6 +22,7 @@ from hermes_monitor import (
     product_key,
     product_to_json,
     send_email,
+    send_push_notification,
     RateLimitedError,
     notify_access_issue,
     notify_stage_access_recovered,
@@ -93,7 +94,10 @@ def sweep_once(db_path: Path, export_path: Path, *, max_per_run: int) -> tuple[i
     if checked:
         export_public_inventory(db_path, export_path)
     if changed:
-        send_email("Hermes purchasable status changed", render_status_email(changed))
+        subject = "Hermes purchasable status changed"
+        body = render_status_email(changed)
+        send_email(subject, body)
+        send_push_notification(db_path, subject, render_status_push_body(changed))
     return checked, len(changed)
 
 
@@ -180,6 +184,13 @@ def render_status_email(changes: list[tuple[Product, str, str]]) -> str:
     for product, old, new in changes:
         lines.append(f"- {product.name}: {old} -> {new} | {product.url}")
     return "\n".join(lines)
+
+
+def render_status_push_body(changes: list[tuple[Product, str, str]]) -> str:
+    first = changes[0]
+    product, old, new = first
+    suffix = "" if len(changes) == 1 else f" and {len(changes) - 1} more"
+    return f"{product.name}: {old} -> {new}{suffix}"
 
 
 def now_local() -> str:

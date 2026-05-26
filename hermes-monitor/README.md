@@ -68,6 +68,20 @@ Inventory/change emails go to `HERMES_EMAIL_TO`. Emails include only newly added
 
 Operational failure and recovery emails go to `HERMES_FAILURE_EMAIL_TO`.
 
+Inventory/change alerts are also sent as iOS push notifications to registered app devices when APNs is configured:
+
+```bash
+export HERMES_APNS_TEAM_ID=...
+export HERMES_APNS_KEY_ID=...
+export HERMES_APNS_BUNDLE_ID=com.kingstonai.hermesmonitor
+export HERMES_APNS_AUTH_KEY_PATH=/home/ec2-user/hermes-monitor/AuthKey_XXXXXXXXXX.p8
+export HERMES_APNS_ENV=production
+```
+
+The iOS app registers device tokens at `/push/register`. Push test calls can use `/push/test`; set `HERMES_PUSH_ADMIN_TOKEN` to require the `X-Hermes-Push-Test-Token` header.
+
+Before archiving a device build, enable Push Notifications for the `com.kingstonai.hermesmonitor` App ID in Apple Developer and refresh the provisioning profile. Without that capability, Xcode will reject the `aps-environment` entitlement during device/archive signing.
+
 ## iOS App Feed
 
 The monitor exports `state/public_inventory.json` with:

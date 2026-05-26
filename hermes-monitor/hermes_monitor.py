@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
 import json
 import os
@@ -10,6 +11,8 @@ import smtplib
 import socket
 import sqlite3
 import ssl
+import subprocess
+import tempfile
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -199,8 +202,11 @@ def check_once(url: str, state_path: Path, db_path: Path, export_path: Path, *, 
     notify_access_recovered(db_path, snapshot)
 
     if changes.has_alert_changes:
-        send_email(render_change_subject(changes), render_change_email_body(changes, snapshot))
-        print(f"[{now_local()}] changes added={len(changes.added)} removed={len(changes.removed)} price={len(changes.price_changed)} detail={len(changes.detail_changed)}; email sent", flush=True)
+        subject = render_change_subject(changes)
+        body = render_change_email_body(changes, snapshot)
+        send_email(subject, body)
+        send_push_notification(db_path, subject, render_change_push_body(changes, snapshot))
+        print(f"[{now_local()}] changes added={len(changes.added)} removed={len(changes.removed)} price={len(changes.price_changed)} detail={len(changes.detail_changed)}; email/push sent", flush=True)
         return True, len(snapshot.products)
     return False, len(snapshot.products)
 
@@ -349,6 +355,19 @@ def init_database(path: Path) -> None:
                 old_value TEXT,
                 new_value TEXT,
                 created_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_tokens (
+                token TEXT PRIMARY KEY,
+                platform TEXT,
+                app_version TEXT,
+                registered_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                disabled_at TEXT,
+                last_error TEXT
             )
             """
         )
@@ -716,6 +735,18 @@ def render_change_email_body(changes: InventoryChanges, current: Snapshot) -> st
     return "\n".join(lines).strip()
 
 
+def render_change_push_body(changes: InventoryChanges, current: Snapshot) -> str:
+    pieces: list[str] = []
+    if changes.added:
+        names = ", ".join(product.name for product in sorted(changes.added, key=lambda item: item.name.lower())[:3])
+        suffix = "" if len(changes.added) <= 3 else f" and {len(changes.added) - 3} more"
+        pieces.append(f"New: {names}{suffix}")
+    if changes.removed:
+        pieces.append(f"{len(changes.removed)} no longer visible")
+    pieces.append(f"Visible links: {len(current.products)}")
+    return ". ".join(piece for piece in pieces if piece)
+
+
 def render_access_issue_body(error: Exception) -> str:
     lines = ["Hermes Monitor hit an access issue and will back off automatically.", "", f"Error: {error}", f"Time: {datetime.now(timezone.utc).isoformat()}"]
     if isinstance(error, RateLimitedError):
@@ -931,6 +962,201 @@ def send_email(subject: str, body: str, *, recipients: list[str] | None = None) 
 def get_failure_recipients() -> list[str]:
     configured = require_env("HERMES_FAILURE_EMAIL_TO")
     return [item.strip() for item in configured.split(",") if item.strip()]
+
+
+def register_push_token(db_path: Path, token: str, *, platform: str | None = None, app_version: str | None = None) -> None:
+    cleaned = normalize_push_token(token)
+    if not cleaned:
+        raise ValueError("Missing push token")
+    now = datetime.now(timezone.utc).isoformat()
+    init_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO push_tokens (token, platform, app_version, registered_at, last_seen_at, disabled_at, last_error)
+            VALUES (?, ?, ?, ?, ?, NULL, NULL)
+            ON CONFLICT(token) DO UPDATE SET
+                platform = excluded.platform,
+                app_version = excluded.app_version,
+                last_seen_at = excluded.last_seen_at,
+                disabled_at = NULL,
+                last_error = NULL
+            """,
+            (cleaned, platform, app_version, now, now),
+        )
+        conn.commit()
+
+
+def normalize_push_token(token: str | None) -> str:
+    return re.sub(r"[^a-fA-F0-9]", "", token or "").lower()
+
+
+def send_push_notification(db_path: Path, title: str, body: str) -> dict[str, object]:
+    config = load_apns_config()
+    if config is None:
+        print(f"[{now_local()}] push skipped: APNs is not configured", flush=True)
+        return {"configured": False, "sent": 0, "failed": 0, "reason": "APNs is not configured"}
+    init_database(db_path)
+    with sqlite3.connect(db_path) as conn:
+        tokens = [row[0] for row in conn.execute("SELECT token FROM push_tokens WHERE disabled_at IS NULL ORDER BY last_seen_at DESC").fetchall()]
+    if not tokens:
+        print(f"[{now_local()}] push skipped: no registered device tokens", flush=True)
+        return {"configured": True, "sent": 0, "failed": 0, "reason": "No registered device tokens"}
+    sent = 0
+    failed = 0
+    for token in tokens:
+        try:
+            send_apns(config, token, title, body)
+            mark_push_result(db_path, token, None)
+            sent += 1
+        except Exception as error:
+            mark_push_result(db_path, token, str(error))
+            failed += 1
+            print(f"[{now_local()}] push failed token={token[:8]}... error={error}", flush=True)
+    return {"configured": True, "sent": sent, "failed": failed}
+
+
+def mark_push_result(db_path: Path, token: str, error: str | None) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    with sqlite3.connect(db_path) as conn:
+        if error:
+            disabled = now if "BadDeviceToken" in error or "Unregistered" in error else None
+            conn.execute("UPDATE push_tokens SET last_error = ?, disabled_at = COALESCE(disabled_at, ?) WHERE token = ?", (error, disabled, token))
+        else:
+            conn.execute("UPDATE push_tokens SET last_error = NULL, disabled_at = NULL, last_seen_at = ? WHERE token = ?", (now, token))
+        conn.commit()
+
+
+@dataclass(frozen=True)
+class APNSConfig:
+    team_id: str
+    key_id: str
+    bundle_id: str
+    auth_key_path: str | None
+    auth_key: str | None
+    environment: str
+
+
+def load_apns_config() -> APNSConfig | None:
+    team_id = os.environ.get("HERMES_APNS_TEAM_ID")
+    key_id = os.environ.get("HERMES_APNS_KEY_ID")
+    bundle_id = os.environ.get("HERMES_APNS_BUNDLE_ID")
+    auth_key_path = os.environ.get("HERMES_APNS_AUTH_KEY_PATH")
+    auth_key = os.environ.get("HERMES_APNS_AUTH_KEY")
+    if not (team_id and key_id and bundle_id and (auth_key_path or auth_key)):
+        return None
+    environment = os.environ.get("HERMES_APNS_ENV", "production").lower()
+    if environment not in {"production", "sandbox"}:
+        raise RuntimeError("HERMES_APNS_ENV must be production or sandbox")
+    return APNSConfig(team_id=team_id, key_id=key_id, bundle_id=bundle_id, auth_key_path=auth_key_path, auth_key=auth_key, environment=environment)
+
+
+def send_apns(config: APNSConfig, token: str, title: str, body: str) -> None:
+    jwt = build_apns_jwt(config)
+    host = "api.push.apple.com" if config.environment == "production" else "api.sandbox.push.apple.com"
+    payload = json.dumps({"aps": {"alert": {"title": title, "body": body}, "sound": "default"}}, ensure_ascii=False).encode()
+    result = subprocess.run(
+        [
+            "curl",
+            "--http2",
+            "--silent",
+            "--show-error",
+            "--request",
+            "POST",
+            f"https://{host}/3/device/{token}",
+            "--header",
+            f"authorization: bearer {jwt}",
+            "--header",
+            f"apns-topic: {config.bundle_id}",
+            "--header",
+            "apns-push-type: alert",
+            "--header",
+            "apns-priority: 10",
+            "--header",
+            "content-type: application/json",
+            "--data-binary",
+            "@-",
+            "--write-out",
+            "\n%{http_code}",
+        ],
+        input=payload,
+        capture_output=True,
+        check=False,
+    )
+    output = result.stdout.decode("utf-8", "replace").strip()
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.decode("utf-8", "replace").strip() or f"curl exited {result.returncode}")
+    body_text, _, status_text = output.rpartition("\n")
+    status = int(status_text or "0")
+    if status < 200 or status >= 300:
+        reason = body_text or f"APNs HTTP {status}"
+        raise RuntimeError(reason)
+
+
+def build_apns_jwt(config: APNSConfig) -> str:
+    header = {"alg": "ES256", "kid": config.key_id}
+    payload = {"iss": config.team_id, "iat": int(time.time())}
+    signing_input = f"{base64url_json(header)}.{base64url_json(payload)}"
+    signature = sign_es256(signing_input.encode(), config)
+    return f"{signing_input}.{base64url(signature)}"
+
+
+def sign_es256(data: bytes, config: APNSConfig) -> bytes:
+    temp_path: str | None = None
+    key_path = config.auth_key_path
+    try:
+        if not key_path:
+            key_text = config.auth_key or ""
+            if "BEGIN PRIVATE KEY" not in key_text:
+                key_text = base64.b64decode(key_text).decode("utf-8")
+            with tempfile.NamedTemporaryFile("w", delete=False) as handle:
+                handle.write(key_text)
+                temp_path = handle.name
+            key_path = temp_path
+        result = subprocess.run(["openssl", "dgst", "-sha256", "-binary", "-sign", key_path], input=data, capture_output=True, check=True)
+        return der_ecdsa_to_raw(result.stdout)
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
+
+
+def der_ecdsa_to_raw(signature: bytes) -> bytes:
+    position = 0
+    if signature[position] != 0x30:
+        raise ValueError("Invalid ECDSA signature")
+    position += 1
+    sequence_length, position = read_der_length(signature, position)
+    end = position + sequence_length
+    values: list[bytes] = []
+    while position < end:
+        if signature[position] != 0x02:
+            raise ValueError("Invalid ECDSA integer")
+        position += 1
+        length, position = read_der_length(signature, position)
+        value = signature[position : position + length]
+        position += length
+        values.append(value.lstrip(b"\x00").rjust(32, b"\x00"))
+    if len(values) != 2:
+        raise ValueError("Invalid ECDSA signature component count")
+    return values[0][-32:] + values[1][-32:]
+
+
+def read_der_length(data: bytes, position: int) -> tuple[int, int]:
+    first = data[position]
+    position += 1
+    if first < 0x80:
+        return first, position
+    count = first & 0x7F
+    length = int.from_bytes(data[position : position + count], "big")
+    return length, position + count
+
+
+def base64url_json(value: object) -> str:
+    return base64url(json.dumps(value, separators=(",", ":")).encode())
+
+
+def base64url(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).rstrip(b"=").decode()
 
 
 def require_env(name: str) -> str:
