@@ -85,15 +85,22 @@ class TextLinksImagesParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.parts: list[str] = []
-        self.links: list[tuple[str, str]] = []
+        self.links: list[tuple[str, str, int]] = []
         self.images: list[tuple[str, str]] = []
         self._href_stack: list[str | None] = []
+        self._link_start_stack: list[int] = []
         self._current_link_text: list[str] = []
+        self._text_length = 0
+
+    def add_part(self, value: str) -> None:
+        self.parts.append(value)
+        self._text_length += len(value)
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = dict(attrs)
         if tag == "a":
             self._href_stack.append(attrs_dict.get("href"))
+            self._link_start_stack.append(self._text_length)
             self._current_link_text = []
         elif tag == "img":
             src = attrs_dict.get("src") or attrs_dict.get("data-src") or attrs_dict.get("data-original")
@@ -101,27 +108,32 @@ class TextLinksImagesParser(HTMLParser):
             if src:
                 self.images.append((normalize_text(key), absolute_hermes_url(src) or src))
         if tag in {"br", "p", "div", "li", "h1", "h2", "h3"}:
-            self.parts.append("\n")
+            self.add_part("\n")
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._href_stack:
             href = self._href_stack.pop()
+            start = self._link_start_stack.pop() if self._link_start_stack else self._text_length
             text = normalize_text(" ".join(self._current_link_text))
             if text:
-                self.links.append((text, href or ""))
+                self.links.append((text, href or "", start))
             self._current_link_text = []
         if tag in {"p", "div", "li", "h1", "h2", "h3"}:
-            self.parts.append("\n")
+            self.add_part("\n")
 
     def handle_data(self, data: str) -> None:
         text = unescape(data)
-        self.parts.append(text)
+        self.add_part(text)
         if self._href_stack:
             self._current_link_text.append(text)
 
     @property
+    def raw_text(self) -> str:
+        return "".join(self.parts)
+
+    @property
     def text(self) -> str:
-        return normalize_multiline("".join(self.parts))
+        return normalize_multiline(self.raw_text)
 
 
 def main() -> None:
@@ -247,12 +259,16 @@ def extract_products(page: TextLinksImagesParser) -> list[Product]:
     products: list[Product] = []
     seen: set[str] = set()
     lines = page.text.splitlines()
-    for name, href in page.links:
-        url = absolute_hermes_url(href)
-        if not url or "/product/" not in url or url in seen:
+    product_links = [(name, href, position, absolute_hermes_url(href)) for name, href, position in page.links]
+    product_links = [(name, href, position, url) for name, href, position, url in product_links if url and "/product/" in url]
+    for index, (name, href, position, url) in enumerate(product_links):
+        if url in seen:
             continue
         seen.add(url)
-        _, price = find_color_price_near_name(lines, name)
+        next_position = product_links[index + 1][2] if index + 1 < len(product_links) else None
+        _, price = find_color_price_near_link(page.raw_text, position, next_position)
+        if not price:
+            _, price = find_color_price_near_name(lines, name)
         image_url = find_image_for_product(page.images, name, url)
         products.append(Product(name=name, url=url, color=None, price=price, image_url=image_url))
     return products
@@ -294,6 +310,14 @@ def find_color_price_near_name(lines: list[str], name: str) -> tuple[str | None,
         price_match = re.search(r"Price\s*(\$[\d,]+(?:\.\d{2})?)", window)
         return normalize_text(color_match.group(1)) if color_match else None, price_match.group(1) if price_match else None
     return None, None
+
+
+def find_color_price_near_link(text: str, position: int, next_position: int | None) -> tuple[str | None, str | None]:
+    end = min(next_position if next_position is not None else len(text), position + 2000)
+    window = normalize_text(text[position:end])
+    color_match = re.search(r"Color:\s*([^,]+?)(?:\s*Price|\s+\$|$)", window)
+    price_match = re.search(r"Price\s*(\$[\d,]+(?:\.\d{2})?)", window)
+    return normalize_text(color_match.group(1)) if color_match else None, price_match.group(1) if price_match else None
 
 
 def init_database(path: Path) -> None:
