@@ -21,7 +21,7 @@ fi
 if tmux has-session -t hermes-detail 2>/dev/null; then
   tmux kill-session -t hermes-detail
 fi
-tmux new-session -d -s hermes-api 'cd $REMOTE_DIR && exec python3 hermes_api.py --host 127.0.0.1 --port 8765'
+tmux new-session -d -s hermes-api 'cd $REMOTE_DIR && set -a && source .env && set +a && exec python3 hermes_api.py --host 127.0.0.1 --port 8765'
 tmux new-session -d -s hermes-detail 'cd $REMOTE_DIR && set -a && source .env && set +a && exec python3 hermes_detail_sweeper.py --loop'
 sleep 3
 tmux capture-pane -pt '$SESSION' -S -20
