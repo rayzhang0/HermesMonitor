@@ -378,21 +378,23 @@ struct PurchasableLine: View {
     let checkedAt: String?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            Text("Purchasable: \(displayStatus)")
-                .font(.footnote.weight(.semibold))
-            Spacer(minLength: 8)
-            if let checkedAt {
-                Text("Checked \(friendlyDate(checkedAt))")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("Not checked yet")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        TimelineView(.periodic(from: .now, by: 60)) { timeline in
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                Text("Purchasable: \(displayStatus)")
+                    .font(.footnote.weight(.semibold))
+                Spacer(minLength: 8)
+                if let checkedAt {
+                    Text("checked \(relativeTimeAgo(checkedAt, now: timeline.date))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not checked yet")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -520,6 +522,13 @@ func friendlyDate(_ value: String) -> String {
 func elapsedText(since value: String) -> String {
     guard let start = parseISODate(value) else { return "unknown" }
     return durationText(from: start, to: Date())
+}
+
+func relativeTimeAgo(_ value: String, now: Date = Date()) -> String {
+    guard let start = parseISODate(value) else { return value }
+    let seconds = max(0, Int(now.timeIntervalSince(start)))
+    if seconds < 60 { return "just now" }
+    return durationText(from: start, to: now) + " ago"
 }
 
 func durationText(from startValue: String, to endValue: String) -> String {
