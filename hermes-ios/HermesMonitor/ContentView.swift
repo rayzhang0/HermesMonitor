@@ -119,7 +119,7 @@ struct HistoryProductCard: View {
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.brandCopper)
                     }
-                    Text("No longer visible")
+                    Text(productCode(from: group.url))
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                 }
@@ -642,4 +642,11 @@ func parseISODate(_ value: String) -> Date? {
     if let date = formatter.date(from: value) { return date }
     formatter.formatOptions = [.withInternetDateTime]
     return formatter.date(from: value)
+}
+
+func productCode(from urlString: String) -> String {
+    guard let lastPathComponent = URL(string: urlString)?.lastPathComponent else { return "Product code unavailable" }
+    let parts = lastPathComponent.split(separator: "-")
+    guard let code = parts.last, code.first == "H" else { return "Product code unavailable" }
+    return String(code)
 }
