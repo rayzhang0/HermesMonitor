@@ -64,38 +64,7 @@ struct HistoryView: View {
             List {
                 ForEach(inventory.groupedHistory) { group in
                     Section {
-                        VStack(alignment: .leading, spacing: 12) {
-                            HStack(alignment: .top, spacing: 12) {
-                                ProductThumbnail(imageURL: group.imageURL)
-                                    .frame(width: 76, height: 76)
-                                VStack(alignment: .leading, spacing: 6) {
-                                    HStack(alignment: .top) {
-                                        Text(group.name).font(.headline)
-                                        Spacer()
-                                        Text(group.price ?? "")
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(Color.brandCopper)
-                                    }
-                                    Text("No longer visible")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(group.records, id: \.id) { item in
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("From \(friendlyDate(item.availableFrom))")
-                                        Text(item.availableUntil.map { "Until \(friendlyDate($0))" } ?? "Still visible")
-                                        Text(item.availableUntil.map { "Visible for \(durationText(from: item.availableFrom, to: $0))" } ?? "Visible for \(elapsedText(since: item.availableFrom))")
-                                            .foregroundStyle(Color.brandCopper)
-                                    }
-                                    .font(.footnote)
-                                    .padding(.vertical, 4)
-                                }
-                            }
-                            ProductOpenButton(urlString: group.url)
-                        }
-                        .padding(.vertical, 8)
+                        HistoryProductCard(group: group, showsSimilarLink: true)
                     }
                 }
             }
@@ -103,6 +72,101 @@ struct HistoryView: View {
             .background(Theme.background)
             .navigationTitle("History")
         }
+    }
+}
+
+struct SimilarProductsView: View {
+    @EnvironmentObject private var inventory: InventoryStore
+    let seriesName: String
+
+    private var groups: [ProductHistoryGroup] {
+        inventory.historyGroups(matchingSeries: seriesName)
+    }
+
+    var body: some View {
+        List {
+            ForEach(groups) { group in
+                Section {
+                    HistoryProductCard(group: group, showsSimilarLink: false)
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Theme.background)
+        .navigationTitle(seriesName)
+    }
+}
+
+struct HistoryProductCard: View {
+    let group: ProductHistoryGroup
+    let showsSimilarLink: Bool
+    @State private var showsFullHistory = false
+
+    private var displayedRecords: [AvailabilityRecord] {
+        showsFullHistory ? group.records : Array(group.records.prefix(3))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                ProductThumbnail(imageURL: group.imageURL)
+                    .frame(width: 76, height: 76)
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top) {
+                        Text(group.name).font(.headline)
+                        Spacer()
+                        Text(group.price ?? "")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.brandCopper)
+                    }
+                    Text("No longer visible")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(displayedRecords, id: \.id) { item in
+                    HistoryRecordBlock(item: item)
+                }
+                if group.records.count > 3 {
+                    Button(showsFullHistory ? "Show less" : "Show more") {
+                        withAnimation(.snappy) {
+                            showsFullHistory.toggle()
+                        }
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.brandCopper)
+                    .buttonStyle(.plain)
+                }
+            }
+            HStack(spacing: 10) {
+                ProductOpenButton(urlString: group.url)
+                if showsSimilarLink {
+                    NavigationLink {
+                        SimilarProductsView(seriesName: productSeriesName(group.name))
+                    } label: {
+                        Text("Show similar products")
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+struct HistoryRecordBlock: View {
+    let item: AvailabilityRecord
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("From \(friendlyDate(item.availableFrom))")
+            Text(item.availableUntil.map { "Until \(friendlyDate($0))" } ?? "Still visible")
+            Text(item.availableUntil.map { "Visible for \(durationText(from: item.availableFrom, to: $0))" } ?? "Visible for \(elapsedText(since: item.availableFrom))")
+                .foregroundStyle(Color.brandCopper)
+        }
+        .font(.footnote)
+        .padding(.vertical, 4)
     }
 }
 

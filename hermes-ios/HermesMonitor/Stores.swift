@@ -70,6 +70,11 @@ final class InventoryStore: ObservableObject {
         }
     }
 
+    func historyGroups(matchingSeries seriesName: String) -> [ProductHistoryGroup] {
+        let targetKey = productSeriesKey(seriesName)
+        return groupedHistory.filter { productSeriesKey($0.name) == targetKey }
+    }
+
     func saveFeedURL() {
         UserDefaults.standard.set(feedURL, forKey: "feedURL")
     }
@@ -183,6 +188,72 @@ func purchasableRank(_ value: String?) -> Int {
     case "not_purchasable": return 1
     default: return 2
     }
+}
+
+func productSeriesName(_ name: String) -> String {
+    let cleanName = cleanProductName(name)
+    let normalized = normalizedSeriesText(cleanName)
+    let knownSeries: [(String, String)] = [
+        ("hermes cabasellier", "Hermès Cabasellier"),
+        ("le petit sac", "Le Petit Sac"),
+        ("picotin lock", "Picotin Lock"),
+        ("neo garden", "Neo Garden"),
+        ("garden party", "Garden Party"),
+        ("so medor", "So Medor"),
+        ("hermes videpoches", "Hermès Videpoches"),
+        ("24/24", "24/24"),
+        ("24 24", "24/24"),
+        ("evelyne", "Evelyne"),
+        ("kelly", "Kelly"),
+        ("constance", "Constance"),
+        ("herbag", "Herbag"),
+        ("lindy", "Lindy"),
+        ("bolide", "Bolide"),
+        ("roulis", "Roulis"),
+        ("jypsiere", "Jypsiere"),
+        ("plume", "Plume"),
+        ("halzan", "Halzan"),
+        ("arcon", "Arcon"),
+        ("balusoie", "Balusoie"),
+        ("lassoie", "Lassoie")
+    ]
+    if let match = knownSeries.first(where: { normalized.hasPrefix($0.0) }) {
+        return match.1
+    }
+    return fallbackSeriesName(cleanName)
+}
+
+func productSeriesKey(_ name: String) -> String {
+    normalizedSeriesText(productSeriesName(name))
+}
+
+private func cleanProductName(_ name: String) -> String {
+    name.replacingOccurrences(of: #"(?i)\s+bag$"#, with: "", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func normalizedSeriesText(_ name: String) -> String {
+    name.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+        .replacingOccurrences(of: #"[^a-z0-9/ ]+"#, with: " ", options: .regularExpression)
+        .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+}
+
+private func fallbackSeriesName(_ name: String) -> String {
+    let beforeDash = name.components(separatedBy: " - ").first ?? name
+    let words = beforeDash.split(separator: " ").map(String.init)
+    let stopWords: Set<String> = ["I", "II", "III", "IV", "V", "Mini", "Micro", "Poche", "Pocket"]
+    var kept: [String] = []
+    for word in words {
+        if word.range(of: #"^\d+$"#, options: .regularExpression) != nil { break }
+        if stopWords.contains(word) { break }
+        kept.append(word)
+    }
+    if kept.first?.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current).lowercased() == "hermes", kept.count > 1 {
+        kept.removeFirst()
+    }
+    return kept.isEmpty ? name : kept.joined(separator: " ")
 }
 
 func priceNumber(_ value: String?) -> Double {
