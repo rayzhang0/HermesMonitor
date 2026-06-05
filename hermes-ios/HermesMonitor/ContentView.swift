@@ -145,9 +145,9 @@ struct HistoryProductCard: View {
                     NavigationLink {
                         SimilarProductsView(seriesName: productSeriesName(group.name))
                     } label: {
-                        Text("Show similar products")
+                        Label("Show Similar Products", systemImage: "sparkle.magnifyingglass")
                     }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(HistoryActionButtonStyle())
                 }
             }
         }
@@ -429,11 +429,34 @@ struct ProductOpenButton: View {
     let urlString: String
 
     var body: some View {
-        Button("Open product") {
+        Button {
             guard let url = URL(string: urlString) else { return }
             openURL(url)
+        } label: {
+            Label("Open Product", systemImage: "arrow.up.right")
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(HistoryActionButtonStyle())
+    }
+}
+
+struct HistoryActionButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.footnote.weight(.semibold))
+            .lineLimit(1)
+            .labelStyle(.titleAndIcon)
+            .foregroundStyle(Color.brandCopper)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(Color.brandCopper.opacity(configuration.isPressed ? 0.18 : 0.11))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.brandCopper.opacity(0.18), lineWidth: 1)
+            )
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
     }
 }
 
