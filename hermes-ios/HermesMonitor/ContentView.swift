@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CryptoKit
 
 struct ContentView: View {
     @EnvironmentObject private var inventory: InventoryStore
@@ -242,9 +243,16 @@ final class ProductImageCache {
 
     private let cache = NSCache<NSURL, UIImage>()
     private var loading = Set<URL>()
+    private let fileManager = FileManager.default
+    private let diskCacheDirectory: URL
+    private let maxDiskCacheBytes: Int64 = 80 * 1024 * 1024
 
     private init() {
-        cache.countLimit = 120
+        cache.countLimit = 160
+        cache.totalCostLimit = 40 * 1024 * 1024
+        diskCacheDirectory = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("ProductImageCache", isDirectory: true)
+        try? fileManager.createDirectory(at: diskCacheDirectory, withIntermediateDirectories: true)
     }
 
     func image(for url: URL) -> UIImage? {
@@ -260,6 +268,7 @@ final class ProductImageCache {
 
     func load(_ url: URL) async -> UIImage? {
         if let cached = image(for: url) { return cached }
+        if let diskCached = loadFromDisk(url) { return diskCached }
         if loading.contains(url) { return nil }
         loading.insert(url)
         defer { loading.remove(url) }
@@ -269,10 +278,56 @@ final class ProductImageCache {
             guard let httpResponse = response as? HTTPURLResponse, (200...299).contains(httpResponse.statusCode), let image = UIImage(data: data) else {
                 return nil
             }
-            cache.setObject(image, forKey: url as NSURL)
+            cache.setObject(image, forKey: url as NSURL, cost: data.count)
+            saveToDisk(data, for: url)
             return image
         } catch {
             return nil
+        }
+    }
+
+    private func loadFromDisk(_ url: URL) -> UIImage? {
+        let fileURL = cacheFileURL(for: url)
+        guard let data = try? Data(contentsOf: fileURL), let image = UIImage(data: data) else { return nil }
+        cache.setObject(image, forKey: url as NSURL, cost: data.count)
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: fileURL.path)
+        return image
+    }
+
+    private func saveToDisk(_ data: Data, for url: URL) {
+        let fileURL = cacheFileURL(for: url)
+        try? data.write(to: fileURL, options: [.atomic])
+        trimDiskCacheIfNeeded()
+    }
+
+    private func cacheFileURL(for url: URL) -> URL {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let fileName = digest.map { String(format: "%02x", $0) }.joined() + ".img"
+        return diskCacheDirectory.appendingPathComponent(fileName)
+    }
+
+    private func trimDiskCacheIfNeeded() {
+        guard let files = try? fileManager.contentsOfDirectory(
+            at: diskCacheDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+
+        var entries: [(url: URL, modifiedAt: Date, size: Int64)] = []
+        var totalSize: Int64 = 0
+        for file in files {
+            guard let values = try? file.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+                  let size = values.fileSize else { continue }
+            let fileSize = Int64(size)
+            totalSize += fileSize
+            entries.append((file, values.contentModificationDate ?? .distantPast, fileSize))
+        }
+
+        guard totalSize > maxDiskCacheBytes else { return }
+        for entry in entries.sorted(by: { $0.modifiedAt < $1.modifiedAt }) {
+            try? fileManager.removeItem(at: entry.url)
+            totalSize -= entry.size
+            if totalSize <= maxDiskCacheBytes { break }
         }
     }
 }
