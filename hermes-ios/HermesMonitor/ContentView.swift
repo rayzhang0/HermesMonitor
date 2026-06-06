@@ -101,6 +101,7 @@ struct HistoryProductCard: View {
     let group: ProductHistoryGroup
     let showsSimilarLink: Bool
     @State private var showsFullHistory = false
+    @State private var showsSimilarProducts = false
 
     private var displayedRecords: [AvailabilityRecord] {
         showsFullHistory ? group.records : Array(group.records.prefix(3))
@@ -139,11 +140,11 @@ struct HistoryProductCard: View {
                     .buttonStyle(.plain)
                 }
             }
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 ProductOpenButton(urlString: group.url)
                 if showsSimilarLink {
-                    NavigationLink {
-                        SimilarProductsView(seriesName: productSeriesName(group.name))
+                    Button {
+                        showsSimilarProducts = true
                     } label: {
                         HistoryActionLabel(title: "Similar Products", systemImage: "sparkle.magnifyingglass")
                     }
@@ -152,6 +153,9 @@ struct HistoryProductCard: View {
             }
         }
         .padding(.vertical, 8)
+        .navigationDestination(isPresented: $showsSimilarProducts) {
+            SimilarProductsView(seriesName: productSeriesName(group.name))
+        }
     }
 }
 
@@ -444,14 +448,16 @@ struct HistoryActionLabel: View {
     let systemImage: String
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .font(.footnote.weight(.semibold))
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .imageScale(.small)
+            Text(title)
+        }
+            .font(.caption.weight(.semibold))
             .lineLimit(1)
-            .labelStyle(.titleAndIcon)
-            .imageScale(.medium)
             .foregroundStyle(Color.brandCopper)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
             .background(
                 Capsule()
                     .fill(Color.brandCopper.opacity(0.11))
