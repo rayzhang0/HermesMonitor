@@ -64,7 +64,7 @@ python3 hermes_monitor.py --list-products
 
 ## Alerts
 
-Inventory/change emails go to `HERMES_EMAIL_TO`. Emails include only newly added, removed, price-changed, or detail-changed products.
+Product emails and iOS push notifications go out only when new product links appear on the main category page. Removed products, price/detail changes, and purchasable-status changes are still recorded and exported without product notifications.
 
 Operational failure and recovery emails go to `HERMES_FAILURE_EMAIL_TO`.
 

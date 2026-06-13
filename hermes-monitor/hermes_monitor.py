@@ -78,7 +78,7 @@ class InventoryChanges:
 
     @property
     def has_alert_changes(self) -> bool:
-        return bool(self.added or self.removed)
+        return bool(self.added)
 
 
 class TextLinksImagesParser(HTMLParser):
@@ -218,8 +218,20 @@ def check_once(url: str, state_path: Path, db_path: Path, export_path: Path, *, 
         body = render_change_email_body(changes, snapshot)
         send_email(subject, body)
         send_push_notification(db_path, subject, render_change_push_body(changes, snapshot))
-        print(f"[{now_local()}] changes added={len(changes.added)} removed={len(changes.removed)} price={len(changes.price_changed)} detail={len(changes.detail_changed)}; email/push sent", flush=True)
+        print(
+            f"[{now_local()}] changes added={len(changes.added)} removed={len(changes.removed)} "
+            f"price={len(changes.price_changed)} detail={len(changes.detail_changed)}; "
+            "new-product email/push sent",
+            flush=True,
+        )
         return True, len(snapshot.products)
+    if changes.has_changes:
+        print(
+            f"[{now_local()}] changes added=0 removed={len(changes.removed)} "
+            f"price={len(changes.price_changed)} detail={len(changes.detail_changed)}; "
+            "recorded without product notification",
+            flush=True,
+        )
     return False, len(snapshot.products)
 
 
@@ -725,50 +737,29 @@ def notify_stage_access_recovered(db_path: Path, *, stage: str, url: str | None 
 
 
 def render_change_subject(changes: InventoryChanges) -> str:
-    parts = []
-    if changes.added:
-        parts.append(f"+{len(changes.added)} available")
-    if changes.removed:
-        parts.append(f"-{len(changes.removed)} gone")
-    if changes.price_changed:
-        parts.append(f"{len(changes.price_changed)} price")
-    if changes.detail_changed:
-        parts.append(f"{len(changes.detail_changed)} detail")
-    return "Hermes inventory changed: " + ", ".join(parts)
+    count = len(changes.added)
+    noun = "bag" if count == 1 else "bags"
+    return f"Hermes Monitor: {count} new {noun} available"
 
 
 def render_change_email_body(changes: InventoryChanges, current: Snapshot) -> str:
-    lines = ["Hermes women's bags availability changed.", "", f"Checked at: {current.checked_at}", f"Current visible product links: {len(current.products)}", f"URL: {current.url}", ""]
-    if changes.added:
-        lines.append("NEWLY AVAILABLE:")
-        lines.extend(f"+ {format_product(product)}" for product in sorted(changes.added, key=lambda item: item.name.lower()))
-        lines.append("")
-    if changes.removed:
-        lines.append("NO LONGER ON MAIN PAGE:")
-        lines.extend(f"- {format_product(product)}" for product in sorted(changes.removed, key=lambda item: item.name.lower()))
-        lines.append("")
-    if changes.price_changed:
-        lines.append("PRICE CHANGES:")
-        for old, new in sorted(changes.price_changed, key=lambda pair: pair[1].name.lower()):
-            lines.append(f"* {new.name}: {old.price or '?'} -> {new.price or '?'} | {new.url}")
-        lines.append("")
-    if changes.detail_changed:
-        lines.append("DETAIL CHANGES:")
-        for old, new in sorted(changes.detail_changed, key=lambda pair: pair[1].name.lower()):
-            lines.append(f"* {old.name} -> {new.name} | {new.url}")
+    lines = [
+        "New Hermes bags are visible on the monitored page.",
+        "",
+        f"Checked at: {current.checked_at}",
+        f"Current visible product links: {len(current.products)}",
+        f"URL: {current.url}",
+        "",
+        "NEWLY AVAILABLE:",
+    ]
+    lines.extend(f"+ {format_product(product)}" for product in sorted(changes.added, key=lambda item: item.name.lower()))
     return "\n".join(lines).strip()
 
 
 def render_change_push_body(changes: InventoryChanges, current: Snapshot) -> str:
-    pieces: list[str] = []
-    if changes.added:
-        names = ", ".join(product.name for product in sorted(changes.added, key=lambda item: item.name.lower())[:3])
-        suffix = "" if len(changes.added) <= 3 else f" and {len(changes.added) - 3} more"
-        pieces.append(f"New: {names}{suffix}")
-    if changes.removed:
-        pieces.append(f"{len(changes.removed)} no longer visible")
-    pieces.append(f"Visible links: {len(current.products)}")
-    return ". ".join(piece for piece in pieces if piece)
+    names = ", ".join(product.name for product in sorted(changes.added, key=lambda item: item.name.lower())[:3])
+    suffix = "" if len(changes.added) <= 3 else f" and {len(changes.added) - 3} more"
+    return f"New: {names}{suffix}. Visible links: {len(current.products)}"
 
 
 def render_access_issue_body(error: Exception) -> str:

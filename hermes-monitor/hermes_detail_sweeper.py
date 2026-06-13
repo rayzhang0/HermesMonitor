@@ -21,8 +21,6 @@ from hermes_monitor import (
     wait_for_request_slot,
     product_key,
     product_to_json,
-    send_email,
-    send_push_notification,
     RateLimitedError,
     notify_access_issue,
     notify_stage_access_recovered,
@@ -94,10 +92,11 @@ def sweep_once(db_path: Path, export_path: Path, *, max_per_run: int) -> tuple[i
     if checked:
         export_public_inventory(db_path, export_path)
     if changed:
-        subject = "Hermes purchasable status changed"
-        body = render_status_email(changed)
-        send_email(subject, body)
-        send_push_notification(db_path, subject, render_status_push_body(changed))
+        print(
+            f"[{now_local()}] detail sweeper recorded {len(changed)} purchasable status "
+            "change(s) without product notification",
+            flush=True,
+        )
     return checked, len(changed)
 
 
@@ -177,20 +176,6 @@ def update_purchasable_status(db_path: Path, product: Product, status: str) -> N
 def is_notifiable_status_transition(old: str, new: str) -> bool:
     notifiable = {"purchasable", "not_purchasable"}
     return old in notifiable and new in notifiable and old != new
-
-
-def render_status_email(changes: list[tuple[Product, str, str]]) -> str:
-    lines = ["Hermes product purchasable status changed.", ""]
-    for product, old, new in changes:
-        lines.append(f"- {product.name}: {old} -> {new} | {product.url}")
-    return "\n".join(lines)
-
-
-def render_status_push_body(changes: list[tuple[Product, str, str]]) -> str:
-    first = changes[0]
-    product, old, new = first
-    suffix = "" if len(changes) == 1 else f" and {len(changes) - 1} more"
-    return f"{product.name}: {old} -> {new}{suffix}"
 
 
 def now_local() -> str:
